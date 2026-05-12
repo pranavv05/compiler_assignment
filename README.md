@@ -43,9 +43,12 @@ compiler_assignment/
 pip install ply
 python compiler.py              # uses test_program.mc by default
 python compiler.py myfile.mc    # or pass any .mc file
+python compiler_gui.py          # launches the desktop interface
 ```
 
 TAC output is also written to **`tac_output.txt`**.
+The parse tree / AST is printed after parsing and also written to **`parse_tree.txt`**.
+The GUI shows tokens, parser status, an expandable visual parse tree, semantic analysis, symbol table, and TAC in tabs.
 
 ---
 
@@ -67,6 +70,7 @@ Builds the AST using an LALR(1) grammar. Key decisions:
 - Dangling-else resolved with a dummy `IFX` precedence token so `else` always binds to the nearest `if`
 - For-loop header grammar: `FOR ( for_init ; for_cond ; for_update ) stmt`
 - All productions return typed AST nodes from `ast_nodes.py`
+- The AST is displayed as a readable parse tree and saved to `parse_tree.txt`
 
 ### Stage 3 — Semantic analysis (`semantic.py`)
 
