@@ -1,9 +1,9 @@
 import ply.yacc as yacc
 from lexer import tokens, lexer   # tokens list required by PLY in this module
 from ast_nodes import (
-    Program, VarDecl, ArrayDecl, Assign, BinOp, UnaryMinus,
-    IntLit, FloatLit, Identifier, ArrayAccess,
-    If, While, For, Print, Block
+    Program, FunctionDef, Param, VarDecl, VarDeclList, ArrayDecl, Assign, BinOp, UnaryMinus, UnaryOp, PostfixOp,
+    IntLit, FloatLit, StringLit, CharLit, Identifier, ArrayAccess,
+    If, While, For, Print, Return, ExprStmt, FunctionCall, Block
 )
 
 # ---------------------------------------------------------------------------
@@ -15,19 +15,38 @@ from ast_nodes import (
 precedence = (
     ('nonassoc', 'IFX'),
     ('nonassoc', 'ELSE'),
+    ('left',     'OR'),
+    ('left',     'AND'),
     ('left',     'EQ', 'NE'),
     ('left',     'LT', 'GT', 'LE', 'GE'),
     ('left',     'PLUS', 'MINUS'),
-    ('left',     'TIMES', 'DIVIDE'),
-    ('right',    'UMINUS'),
+    ('left',     'TIMES', 'DIVIDE', 'MOD'),
+    ('right',    'UMINUS', 'NOT', 'AMP'),
+    ('left',     'INCREMENT', 'DECREMENT'),
 )
 
 # ---------------------------------------------------------------------------
 # Top-level
 # ---------------------------------------------------------------------------
 def p_program(p):
-    'program : stmt_list'
+    'program : external_list'
     p[0] = Program(p[1])
+
+def p_external_list_multi(p):
+    'external_list : external_list external'
+    p[0] = p[1] + [p[2]]
+
+def p_external_list_empty(p):
+    'external_list : empty'
+    p[0] = []
+
+def p_external_function(p):
+    'external : function_def'
+    p[0] = p[1]
+
+def p_external_stmt(p):
+    'external : stmt'
+    p[0] = p[1]
 
 def p_stmt_list_multi(p):
     'stmt_list : stmt_list stmt'
@@ -68,20 +87,77 @@ def p_stmt_print(p):
     'stmt : print_stmt'
     p[0] = p[1]
 
+def p_stmt_return(p):
+    'stmt : return_stmt'
+    p[0] = p[1]
+
+def p_stmt_expr(p):
+    'stmt : expr_stmt'
+    p[0] = p[1]
+
 def p_stmt_block(p):
     'stmt : block'
     p[0] = p[1]
 
 # ---------------------------------------------------------------------------
+# Function definitions
+# Supports normal C-style typed params and lenient old-style params:
+#   int add(int a, int b) { ... }
+#   int add(a, b) { ... }      # params default to int
+# ---------------------------------------------------------------------------
+def p_function_def_typed(p):
+    'function_def : type ID LPAREN param_list RPAREN block'
+    p[0] = FunctionDef(p[1], p[2], p[4], p[6], p.lineno(2))
+
+def p_function_def_void(p):
+    'function_def : VOID ID LPAREN param_list RPAREN block'
+    p[0] = FunctionDef('void', p[2], p[4], p[6], p.lineno(2))
+
+def p_param_list_multi(p):
+    'param_list : param_list COMMA param'
+    p[0] = p[1] + [p[3]]
+
+def p_param_list_one(p):
+    'param_list : param'
+    p[0] = [p[1]]
+
+def p_param_list_empty(p):
+    'param_list : empty'
+    p[0] = []
+
+def p_param_typed(p):
+    'param : type ID'
+    p[0] = Param(p[2], p[1], p.lineno(2))
+
+def p_param_untyped(p):
+    'param : ID'
+    p[0] = Param(p[1], 'int', p.lineno(1))
+
+# ---------------------------------------------------------------------------
 # Variable / array declarations
 # ---------------------------------------------------------------------------
-def p_var_decl_init(p):
-    'var_decl : type ID ASSIGN expr SEMICOLON'
-    p[0] = VarDecl(p[1], p[2], p[4], p.lineno(2))
+def p_var_decl(p):
+    'var_decl : type declarator_list SEMICOLON'
+    decls = []
+    for name, init, lineno in p[2]:
+        decls.append(VarDecl(p[1], name, init, lineno))
+    p[0] = decls[0] if len(decls) == 1 else VarDeclList(decls)
 
-def p_var_decl_no_init(p):
-    'var_decl : type ID SEMICOLON'
-    p[0] = VarDecl(p[1], p[2], None, p.lineno(2))
+def p_declarator_list_multi(p):
+    'declarator_list : declarator_list COMMA declarator'
+    p[0] = p[1] + [p[3]]
+
+def p_declarator_list_one(p):
+    'declarator_list : declarator'
+    p[0] = [p[1]]
+
+def p_declarator_init(p):
+    'declarator : ID ASSIGN expr'
+    p[0] = (p[1], p[3], p.lineno(1))
+
+def p_declarator_plain(p):
+    'declarator : ID'
+    p[0] = (p[1], None, p.lineno(1))
 
 def p_array_decl(p):
     'array_decl : type ID LBRACKET INT_LIT RBRACKET SEMICOLON'
@@ -148,6 +224,10 @@ def p_for_update_assign(p):
     'for_update : ID ASSIGN expr'
     p[0] = Assign(Identifier(p[1], p.lineno(1)), p[3], p.lineno(1))
 
+def p_for_update_expr(p):
+    'for_update : expr'
+    p[0] = ExprStmt(p[1], getattr(p[1], 'lineno', 0))
+
 def p_for_update_empty(p):
     'for_update : empty'
     p[0] = None
@@ -158,6 +238,21 @@ def p_for_update_empty(p):
 def p_print(p):
     'print_stmt : PRINT LPAREN expr RPAREN SEMICOLON'
     p[0] = Print(p[3], p.lineno(1))
+
+# ---------------------------------------------------------------------------
+# Return / expression statements
+# ---------------------------------------------------------------------------
+def p_return_value(p):
+    'return_stmt : RETURN expr SEMICOLON'
+    p[0] = Return(p[2], p.lineno(1))
+
+def p_return_empty(p):
+    'return_stmt : RETURN SEMICOLON'
+    p[0] = Return(None, p.lineno(1))
+
+def p_expr_stmt(p):
+    'expr_stmt : expr SEMICOLON'
+    p[0] = ExprStmt(p[1], getattr(p[1], 'lineno', 0))
 
 # ---------------------------------------------------------------------------
 # Block
@@ -177,6 +272,14 @@ def p_type_float(p):
     'type : FLOAT'
     p[0] = 'float'
 
+def p_type_double(p):
+    'type : DOUBLE'
+    p[0] = 'double'
+
+def p_type_char(p):
+    'type : CHAR'
+    p[0] = 'char'
+
 # ---------------------------------------------------------------------------
 # Expressions (with precedence climbing via PLY's %prec)
 # ---------------------------------------------------------------------------
@@ -185,6 +288,9 @@ def p_expr_binop(p):
             | expr MINUS  expr
             | expr TIMES  expr
             | expr DIVIDE expr
+            | expr MOD    expr
+            | expr AND    expr
+            | expr OR     expr
             | expr LT     expr
             | expr GT     expr
             | expr LE     expr
@@ -197,9 +303,38 @@ def p_expr_uminus(p):
     'expr : MINUS expr %prec UMINUS'
     p[0] = UnaryMinus(p[2], p.lineno(1))
 
+def p_expr_not(p):
+    'expr : NOT expr'
+    p[0] = UnaryOp('!', p[2], p.lineno(1))
+
+def p_expr_address(p):
+    'expr : AMP expr'
+    p[0] = UnaryOp('&', p[2], p.lineno(1))
+
+def p_expr_postfix(p):
+    '''expr : ID INCREMENT
+            | ID DECREMENT'''
+    p[0] = PostfixOp(p[2], Identifier(p[1], p.lineno(1)), p.lineno(1))
+
 def p_expr_group(p):
     'expr : LPAREN expr RPAREN'
     p[0] = p[2]
+
+def p_expr_function_call(p):
+    'expr : ID LPAREN arg_list RPAREN'
+    p[0] = FunctionCall(p[1], p[3], p.lineno(1))
+
+def p_arg_list_multi(p):
+    'arg_list : arg_list COMMA expr'
+    p[0] = p[1] + [p[3]]
+
+def p_arg_list_one(p):
+    'arg_list : expr'
+    p[0] = [p[1]]
+
+def p_arg_list_empty(p):
+    'arg_list : empty'
+    p[0] = []
 
 def p_expr_array_access(p):
     'expr : ID LBRACKET expr RBRACKET'
@@ -217,6 +352,14 @@ def p_expr_float_lit(p):
     'expr : FLOAT_LIT'
     p[0] = FloatLit(p[1], p.lineno(1))
 
+def p_expr_string_lit(p):
+    'expr : STRING_LIT'
+    p[0] = StringLit(p[1], p.lineno(1))
+
+def p_expr_char_lit(p):
+    'expr : CHAR_LIT'
+    p[0] = CharLit(p[1], p.lineno(1))
+
 # ---------------------------------------------------------------------------
 # Empty production
 # ---------------------------------------------------------------------------
@@ -229,11 +372,16 @@ def p_empty(p):
 # ---------------------------------------------------------------------------
 def p_error(p):
     if p:
-        print(f"  [Parser] Syntax error at '{p.value}' (line {p.lineno})")
+        message = f"  [Parser] Syntax error at '{p.value}' (line {p.lineno})"
     else:
-        print("  [Parser] Syntax error at EOF")
+        message = "  [Parser] Syntax error at EOF"
+
+    if 'parser' in globals() and hasattr(parser, 'errors'):
+        parser.errors.append(message.strip())
+    print(message)
 
 # ---------------------------------------------------------------------------
 # Build the parser (suppress table dump to keep output clean)
 # ---------------------------------------------------------------------------
 parser = yacc.yacc(debug=False, write_tables=False)
+parser.errors = []

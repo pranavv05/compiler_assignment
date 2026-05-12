@@ -6,6 +6,11 @@ A hand-written, four-stage compiler for a subset of C, built in Python using [PL
 
 ## Language features
 
+This compiler is designed to be correct for the Mini-C grammar below. If the
+input uses unsupported syntax or illegal characters, compilation stops with a
+lexer, parser, or semantic diagnostic instead of producing misleading later-stage
+output.
+
 | Feature | Example |
 |---|---|
 | int / float declarations | `int x = 5;` `float y = 10.5;` |
@@ -16,6 +21,11 @@ A hand-written, four-stage compiler for a subset of C, built in Python using [PL
 | If-else | `if (cond) { } else { }` |
 | While loop | `while (i < 5) { }` |
 | For loop | `for (int j = 0; j < 5; j = j + 1) { }` |
+| Function definitions | `int add(int a, int b) { return a + b; }` |
+| Untyped C-style parameters | `int add(a, b) { return a + b; }` |
+| Function calls | `int x = add(2, 5);` |
+| Void functions | `void main() { print(1); }` |
+| Return statements | `return x;` `return;` |
 | Built-in print | `print(sum);` |
 | Block scoping | Inner `{ }` creates a new scope |
 | Type checking | `int bad = y;` → compile error |
@@ -41,14 +51,14 @@ compiler_assignment/
 
 ```bash
 pip install ply
-python compiler.py              # uses test_program.mc by default
-python compiler.py myfile.mc    # or pass any .mc file
-python compiler_gui.py          # launches the desktop interface
+python compiler.py              # opens the UI with test_program.mc
+python compiler.py myfile.mc    # opens the UI with any .mc file
+python compiler.py --cli myfile.mc  # optional terminal mode
 ```
 
 TAC output is also written to **`tac_output.txt`**.
-The parse tree / AST is printed after parsing and also written to **`parse_tree.txt`**.
-The GUI shows tokens, parser status, an expandable visual parse tree, semantic analysis, symbol table, and TAC in tabs.
+The parse tree / AST is shown in the UI and also written to **`parse_tree.txt`**.
+The UI shows tokens, parser status, an expandable visual parse tree, semantic analysis, symbol table, TAC, and an all-output tab.
 
 ---
 
@@ -87,6 +97,11 @@ Checks performed:
 | Array used without index | `print(list);` |
 | Non-array used as array | `x[0] = 1;` when `x` is `int` |
 | Array index must be int | `list[1.5]` |
+| Function argument count | `add(1)` when `add` expects 2 arguments |
+| Function return type | `return 1.5;` inside an `int` function |
+
+For compatibility with simple classroom examples, untyped function parameters
+and first assignments to undeclared names inside functions are treated as `int`.
 
 Scoping rules:
 - `Block { }` always opens its own scope
@@ -109,6 +124,9 @@ Emits three-address code using temporaries `t1, t2, …` and labels `L1, L2, …
 | While | `Lstart:` … `ifFalse cond goto Lend` … `goto Lstart` … `Lend:` |
 | For | init … `Lstart:` … condition check … body … update … `goto Lstart` … `Lend:` |
 | Print | `print val` |
+| Function | `function add:` ... `end function add` |
+| Call | `arg 2` ... `t1 = call add, 2` |
+| Return | `return t1` |
 | Array alloc | `alloc list[10]` |
 
 ---

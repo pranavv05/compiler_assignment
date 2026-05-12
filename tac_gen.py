@@ -1,7 +1,7 @@
 from ast_nodes import (
-    Program, VarDecl, ArrayDecl, Assign, BinOp, UnaryMinus,
-    IntLit, FloatLit, Identifier, ArrayAccess,
-    If, While, For, Print, Block
+    Program, FunctionDef, VarDecl, VarDeclList, ArrayDecl, Assign, BinOp, UnaryMinus, UnaryOp, PostfixOp,
+    IntLit, FloatLit, StringLit, CharLit, Identifier, ArrayAccess,
+    If, While, For, Print, Return, ExprStmt, FunctionCall, Block
 )
 
 
@@ -50,10 +50,21 @@ class TACGenerator:
         for stmt in node.stmts:
             self.visit(stmt)
 
+    def visit_FunctionDef(self, node):
+        self._emit(f'function {node.name}:')
+        self.visit(node.body)
+        if node.return_type == 'void':
+            self._emit('return')
+        self._emit(f'end function {node.name}')
+
     def visit_VarDecl(self, node):
         if node.init is not None:
             src = self.visit(node.init)
             self._emit(f'{node.name} = {src}')
+
+    def visit_VarDeclList(self, node):
+        for decl in node.decls:
+            self.visit(decl)
 
     def visit_ArrayDecl(self, node):
         # Reserve space annotation; no runtime allocation needed for TAC
@@ -121,6 +132,16 @@ class TACGenerator:
         val = self.visit(node.expr)
         self._emit(f'print {val}')
 
+    def visit_Return(self, node):
+        if node.expr is None:
+            self._emit('return')
+        else:
+            val = self.visit(node.expr)
+            self._emit(f'return {val}')
+
+    def visit_ExprStmt(self, node):
+        self.visit(node.expr)
+
     def visit_Block(self, node):
         for stmt in node.stmts:
             self.visit(stmt)
@@ -141,11 +162,33 @@ class TACGenerator:
         self._emit(f'{t} = -{operand}')
         return t
 
+    def visit_UnaryOp(self, node):
+        operand = self.visit(node.operand)
+        t = self._new_temp()
+        self._emit(f'{t} = {node.op}{operand}')
+        return t
+
+    def visit_PostfixOp(self, node):
+        target = self.visit(node.target)
+        old = self._new_temp()
+        self._emit(f'{old} = {target}')
+        op = '+' if node.op == '++' else '-'
+        self._emit(f'{target} = {target} {op} 1')
+        return old
+
     def visit_IntLit(self, node):
         return str(node.value)
 
     def visit_FloatLit(self, node):
         return str(node.value)
+
+    def visit_StringLit(self, node):
+        escaped = node.value.replace('"', '\\"')
+        return f'"{escaped}"'
+
+    def visit_CharLit(self, node):
+        escaped = node.value.replace("'", "\\'")
+        return f"'{escaped}'"
 
     def visit_Identifier(self, node):
         return node.name
@@ -154,6 +197,14 @@ class TACGenerator:
         idx = self.visit(node.index)
         t = self._new_temp()
         self._emit(f'{t} = {node.name}[{idx}]')
+        return t
+
+    def visit_FunctionCall(self, node):
+        for arg in node.args:
+            val = self.visit(arg)
+            self._emit(f'param {val}')
+        t = self._new_temp()
+        self._emit(f'{t} = call {node.name}, {len(node.args)}')
         return t
 
     # ------------------------------------------------------------------

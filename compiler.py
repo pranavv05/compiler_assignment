@@ -1,8 +1,10 @@
 """
-compiler.py - CLI entry point and shared pipeline for the Mini-C compiler.
+compiler.py - GUI launcher and shared pipeline for the Mini-C compiler.
 
 Usage:
-    python compiler.py [source_file]   (defaults to test_program.mc)
+    python compiler.py                  # opens the GUI with test_program.mc
+    python compiler.py source.mc        # opens the GUI with source.mc
+    python compiler.py --cli source.mc  # prints compiler output in terminal
 
 Stages executed:
     1. Lexer        - tokenise the source
@@ -10,7 +12,7 @@ Stages executed:
     3. Semantic     - symbol table + type checking
     4. TAC gen      - emit three-address code
 
-Output:
+GUI output:
     - Token stream  (stage 1)
     - Parse tree / AST  (stage 2, also written to parse_tree.txt)
     - Symbol table  (after stage 3)
@@ -117,6 +119,7 @@ def compile_source(source, write_outputs=True):
 
     # Stage 1 - Lexer
     lexer.lineno = 1
+    lexer.errors = []
     lexer.input(source)
     tokens_found, lexer_messages = capture_output(lambda: list(lexer))
     token_lines = lexer_messages[:]
@@ -126,14 +129,22 @@ def compile_source(source, write_outputs=True):
     token_lines.append(f'  {len(tokens_found)} tokens produced.')
     sections['lexer'] = token_lines
 
+    if lexer.errors:
+        sections['parser'] = ['  Parser skipped because lexical errors were found.']
+        return {'ok': False, 'sections': sections, 'errors': lexer.errors}
+
     # Stage 2 - Parser
     lexer.lineno = 1
+    lexer.errors = []
+    parser.errors = []
     ast, parser_messages = capture_output(parser.parse, source, lexer=lexer)
     parser_lines = parser_messages[:]
-    if ast is None:
+    if parser.errors or ast is None:
         parser_lines.append('  Parse failed - aborting.')
+        if ast is not None:
+            ast = None
         sections['parser'] = parser_lines
-        return {'ok': False, 'sections': sections, 'errors': parser_lines}
+        return {'ok': False, 'sections': sections, 'errors': parser.errors or parser_lines}
 
     parser_lines.append('  AST built successfully.')
     sections['parser'] = parser_lines
@@ -213,6 +224,17 @@ def run(source_file):
         sys.exit(1)
 
 
+def launch_gui(source_file='test_program.mc'):
+    from compiler_gui import MiniCCompilerApp
+
+    app = MiniCCompilerApp(initial_path=source_file)
+    app.mainloop()
+
+
 if __name__ == '__main__':
-    source_file = sys.argv[1] if len(sys.argv) > 1 else 'test_program.mc'
-    run(source_file)
+    if len(sys.argv) > 1 and sys.argv[1] == '--cli':
+        source_file = sys.argv[2] if len(sys.argv) > 2 else 'test_program.mc'
+        run(source_file)
+    else:
+        source_file = sys.argv[1] if len(sys.argv) > 1 else 'test_program.mc'
+        launch_gui(source_file)

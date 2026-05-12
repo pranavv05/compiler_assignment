@@ -1,7 +1,7 @@
 from ast_nodes import (
-    Program, VarDecl, ArrayDecl, Assign, BinOp, UnaryMinus,
-    IntLit, FloatLit, Identifier, ArrayAccess,
-    If, While, For, Print, Block
+    Program, FunctionDef, Param, VarDecl, VarDeclList, ArrayDecl, Assign, BinOp, UnaryMinus, UnaryOp, PostfixOp,
+    IntLit, FloatLit, StringLit, CharLit, Identifier, ArrayAccess,
+    If, While, For, Print, Return, ExprStmt, FunctionCall, Block
 )
 
 
@@ -39,11 +39,13 @@ class SymbolTable:
         return None
 
     def print_table(self):
-        header = f"{'Name':<15} {'Type':<10} {'Scope':<8} {'Line'}"
+        name_width = max([len('Name')] + [len(e['name']) for e in self.all_decls]) + 2
+        type_width = max([len('Type')] + [len(e['type']) for e in self.all_decls]) + 2
+        header = f"{'Name':<{name_width}} {'Type':<{type_width}} {'Scope':<8} {'Line'}"
         print(header)
         print('-' * len(header))
         for e in self.all_decls:
-            print(f"  {e['name']:<13} {e['type']:<10} {e['scope']:<8} {e['line']}")
+            print(f"  {e['name']:<{name_width - 2}} {e['type']:<{type_width}} {e['scope']:<8} {e['line']}")
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +55,8 @@ class SemanticAnalyzer:
     def __init__(self):
         self.symbol_table = SymbolTable()
         self.errors = []
+        self.functions = {}
+        self.current_function = None
 
     def error(self, msg, lineno):
         self.errors.append(f"Line {lineno}: {msg}")
@@ -81,16 +85,49 @@ class SemanticAnalyzer:
     # ------------------------------------------------------------------
     def visit_Program(self, node):
         for stmt in node.stmts:
+            if isinstance(stmt, FunctionDef):
+                signature = {
+                    'return_type': stmt.return_type,
+                    'params': [param.param_type for param in stmt.params],
+                }
+                self.functions[stmt.name] = signature
+                fn_type = f"{stmt.return_type}({', '.join(signature['params'])})"
+                if not self.symbol_table.declare(stmt.name, fn_type, stmt.lineno):
+                    self.error(
+                        f"Function '{stmt.name}' already declared in this scope",
+                        stmt.lineno
+                    )
+
+        for stmt in node.stmts:
             self.visit(stmt)
+
+    def visit_FunctionDef(self, node):
+        previous_function = self.current_function
+        self.current_function = node
+        self.symbol_table.enter_scope()
+
+        for param in node.params:
+            self.visit(param)
+
+        self.visit(node.body)
+        self.symbol_table.exit_scope()
+        self.current_function = previous_function
+
+    def visit_Param(self, node):
+        if not self.symbol_table.declare(node.name, node.param_type, node.lineno):
+            self.error(
+                f"Parameter '{node.name}' already declared in this function",
+                node.lineno
+            )
 
     def visit_VarDecl(self, node):
         init_type = None
         if node.init is not None:
             init_type = self.visit(node.init)
 
-        if init_type is not None and node.var_type == 'int' and init_type == 'float':
+        if init_type is not None and node.var_type in ('int', 'char') and init_type in ('float', 'double'):
             self.error(
-                f"Cannot assign float expression to int variable '{node.name}'",
+                f"Cannot assign {init_type} expression to {node.var_type} variable '{node.name}'",
                 node.lineno
             )
 
@@ -100,7 +137,17 @@ class SemanticAnalyzer:
                 node.lineno
             )
 
+    def visit_VarDeclList(self, node):
+        for decl in node.decls:
+            self.visit(decl)
+
     def visit_ArrayDecl(self, node):
+        if node.size <= 0:
+            self.error(
+                f"Array '{node.name}' size must be a positive integer",
+                node.lineno
+            )
+
         array_type = f'{node.var_type}[]'
         if not self.symbol_table.declare(node.name, array_type, node.lineno):
             self.error(
@@ -114,16 +161,17 @@ class SemanticAnalyzer:
         if isinstance(node.target, Identifier):
             sym = self.symbol_table.lookup(node.target.name)
             if sym is None:
-                self.error(f"Undeclared variable '{node.target.name}'", node.lineno)
+                inferred_type = val_type or 'int'
+                self.symbol_table.declare(node.target.name, inferred_type, node.lineno)
             else:
                 if sym['type'].endswith('[]'):
                     self.error(
                         f"Array '{node.target.name}' used without index in assignment",
                         node.lineno
                     )
-                elif sym['type'] == 'int' and val_type == 'float':
+                elif sym['type'] in ('int', 'char') and val_type in ('float', 'double'):
                     self.error(
-                        f"Cannot assign float to int variable '{node.target.name}'",
+                        f"Cannot assign {val_type} to {sym['type']} variable '{node.target.name}'",
                         node.lineno
                     )
 
@@ -135,9 +183,9 @@ class SemanticAnalyzer:
                 self.error(f"'{node.target.name}' is not an array", node.lineno)
             else:
                 elem_type = sym['type'].replace('[]', '')
-                if elem_type == 'int' and val_type == 'float':
+                if elem_type in ('int', 'char') and val_type in ('float', 'double'):
                     self.error(
-                        f"Cannot assign float to int array '{node.target.name}'",
+                        f"Cannot assign {val_type} to {elem_type} array '{node.target.name}'",
                         node.lineno
                     )
 
@@ -153,10 +201,12 @@ class SemanticAnalyzer:
         right_type = self.visit(node.right)
 
         # Relational operators produce an int (boolean) result
-        if node.op in ('<', '>', '<=', '>=', '==', '!='):
+        if node.op in ('<', '>', '<=', '>=', '==', '!=', '&&', '||'):
             return 'int'
 
         # Arithmetic: float wins over int
+        if 'double' in (left_type, right_type):
+            return 'double'
         if 'float' in (left_type, right_type):
             return 'float'
         return 'int'
@@ -164,11 +214,28 @@ class SemanticAnalyzer:
     def visit_UnaryMinus(self, node):
         return self.visit(node.operand)
 
+    def visit_UnaryOp(self, node):
+        operand_type = self.visit(node.operand)
+        if node.op == '!':
+            return 'int'
+        if node.op == '&':
+            return f'{operand_type}*'
+        return operand_type
+
+    def visit_PostfixOp(self, node):
+        return self.visit(node.target)
+
     def visit_IntLit(self, node):
         return 'int'
 
     def visit_FloatLit(self, node):
         return 'float'
+
+    def visit_StringLit(self, node):
+        return 'char[]'
+
+    def visit_CharLit(self, node):
+        return 'char'
 
     def visit_Identifier(self, node):
         sym = self.symbol_table.lookup(node.name)
@@ -222,6 +289,60 @@ class SemanticAnalyzer:
 
     def visit_Print(self, node):
         self.visit(node.expr)
+
+    def visit_Return(self, node):
+        expr_type = self.visit(node.expr) if node.expr is not None else 'void'
+
+        if self.current_function is None:
+            self.error("return statement outside a function", node.lineno)
+            return
+
+        return_type = self.current_function.return_type
+        if return_type == 'void' and node.expr is not None:
+            self.error(
+                f"Void function '{self.current_function.name}' cannot return a value",
+                node.lineno
+            )
+        elif return_type != 'void' and node.expr is None:
+            self.error(
+                f"Function '{self.current_function.name}' must return a value",
+                node.lineno
+            )
+        elif return_type in ('int', 'char') and expr_type in ('float', 'double'):
+            self.error(
+                f"Cannot return {expr_type} from {return_type} function '{self.current_function.name}'",
+                node.lineno
+            )
+
+    def visit_ExprStmt(self, node):
+        self.visit(node.expr)
+
+    def visit_FunctionCall(self, node):
+        signature = self.functions.get(node.name)
+        arg_types = [self.visit(arg) for arg in node.args]
+
+        if signature is None and node.name in ('printf', 'scanf'):
+            return 'int'
+
+        if signature is None:
+            self.error(f"Call to undeclared function '{node.name}'", node.lineno)
+            return 'int'
+
+        expected = signature['params']
+        if len(arg_types) != len(expected):
+            self.error(
+                f"Function '{node.name}' expects {len(expected)} argument(s), got {len(arg_types)}",
+                node.lineno
+            )
+        else:
+            for index, (actual, formal) in enumerate(zip(arg_types, expected), 1):
+                if formal in ('int', 'char') and actual in ('float', 'double'):
+                    self.error(
+                        f"Argument {index} of '{node.name}' expects {formal}, got {actual}",
+                        node.lineno
+                    )
+
+        return signature['return_type']
 
     def visit_Block(self, node):
         self.symbol_table.enter_scope()

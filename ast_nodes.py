@@ -5,12 +5,30 @@ class Program(Node):
     def __init__(self, stmts):
         self.stmts = stmts
 
+class FunctionDef(Node):
+    def __init__(self, return_type, name, params, body, lineno=0):
+        self.return_type = return_type
+        self.name = name
+        self.params = params
+        self.body = body
+        self.lineno = lineno
+
+class Param(Node):
+    def __init__(self, name, param_type='int', lineno=0):
+        self.name = name
+        self.param_type = param_type
+        self.lineno = lineno
+
 class VarDecl(Node):
     def __init__(self, var_type, name, init=None, lineno=0):
         self.var_type = var_type   # 'int' or 'float'
         self.name = name
         self.init = init           # expression Node or None
         self.lineno = lineno
+
+class VarDeclList(Node):
+    def __init__(self, decls):
+        self.decls = decls
 
 class ArrayDecl(Node):
     def __init__(self, var_type, name, size, lineno=0):
@@ -37,12 +55,34 @@ class UnaryMinus(Node):
         self.operand = operand
         self.lineno = lineno
 
+class UnaryOp(Node):
+    def __init__(self, op, operand, lineno=0):
+        self.op = op
+        self.operand = operand
+        self.lineno = lineno
+
+class PostfixOp(Node):
+    def __init__(self, op, target, lineno=0):
+        self.op = op
+        self.target = target
+        self.lineno = lineno
+
 class IntLit(Node):
     def __init__(self, value, lineno=0):
         self.value = value
         self.lineno = lineno
 
 class FloatLit(Node):
+    def __init__(self, value, lineno=0):
+        self.value = value
+        self.lineno = lineno
+
+class StringLit(Node):
+    def __init__(self, value, lineno=0):
+        self.value = value
+        self.lineno = lineno
+
+class CharLit(Node):
     def __init__(self, value, lineno=0):
         self.value = value
         self.lineno = lineno
@@ -82,6 +122,22 @@ class For(Node):
 class Print(Node):
     def __init__(self, expr, lineno=0):
         self.expr = expr
+        self.lineno = lineno
+
+class Return(Node):
+    def __init__(self, expr=None, lineno=0):
+        self.expr = expr
+        self.lineno = lineno
+
+class ExprStmt(Node):
+    def __init__(self, expr, lineno=0):
+        self.expr = expr
+        self.lineno = lineno
+
+class FunctionCall(Node):
+    def __init__(self, name, args, lineno=0):
+        self.name = name
+        self.args = args
         self.lineno = lineno
 
 class Block(Node):
